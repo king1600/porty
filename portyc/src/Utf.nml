@@ -1,0 +1,94 @@
+exception InvalidEscape;
+
+function contains(haystack, needle) {
+    try { (String.find haystack 0 (String.make 1 needle)) >= 0 }
+    catch { _ -> false }
+}
+
+function isnt_str(c) { c != '"' }
+function is_space(c) { contains " \t\r" c }
+function is_lower(c) { c >= 'a' && c <= 'z' }
+function is_upper(c) { c >= 'A' && c <= 'Z' }
+function is_digit(c) { c >= '0' && c <= '9' }
+function is_numeric(c) { is_digit(c) || c == '.' }
+function is_alpha(c) { is_lower(c) || is_upper(c) }
+function is_seperator(c) { is_space(c) || c == ';' }
+function is_operator(c) { contains "+-*/<>=^&|.!" c }
+function is_ident_start(c) { is_alpha(c) || c == '$' || c == '_' }
+function is_ident(c) { is_ident_start(c) || is_digit(c) }
+
+function unescape(input) {
+    var pos = &0;
+    var index = &0;
+    var length = String.length input;
+    var output = String.create length;
+
+    function next_index() {
+        index := *index + 1;
+        if *index >= length then
+            throw InvalidEscape;
+    }
+
+    while *index < length {
+        match String.get input (*index) {
+        | '\\' ->
+            next_index();
+            match String.get input (*index) {
+            | '/' -> String.set output (*pos) '/'
+            | '\\' -> String.set output (*pos) '\\'
+            | 'n' -> String.set output (*pos) '\n'
+            | 'r' -> String.set output (*pos) '\r'
+            | 't' -> String.set output (*pos) '\t'
+            | 'b' -> String.set output (*pos) (chr 8)
+            | 'f' -> String.set output (*pos) (chr 12)
+            | 'u' ->
+                var uchar = &0;
+                var uindex = &0;
+                while *uindex < 4 {
+                    next_index();
+                    var char = match String.get input (*index) {
+                    | char when is_digit(char) -> (ord char) - (ord '0')
+                    | char when is_lower(char) -> ((ord char) - (ord 'a')) + 10
+                    | char when is_upper(char) -> ((ord char) - (ord 'A')) + 10
+                    | _ -> throw InvalidEscape
+                    }
+                    uchar := (*uchar * 16) + char;
+                    uindex := *uindex + 1;
+                }
+                match *uchar {
+                | c when c < 0x80 ->
+                    String.set output (*pos) (chr (c and 0xFF));
+                | c when c < 0x800 ->
+                    String.set output ((*pos)) (chr (((c >> 6) or 0xC0) and 0xFF));
+                    String.set output ((*pos)+1) (chr (((c and 0x3F) or 0x80) and 0xFF));
+                    pos := *pos + 1;
+                | c when c < 0xD800 ->
+                    String.set output ((*pos)) (chr (((c >> 12) or 0xE0) and 0xFF));
+                    String.set output ((*pos)+1) (chr ((((c >> 6) and 0x3F) or 0x80) and 0xFF));
+                    String.set output ((*pos)+2) (chr (((c and 0x3F) or 0x80) and 0xFF));
+                    pos := *pos + 2;
+                | c when c < 0xE000 ->
+                    throw InvalidEscape;
+                | c when c < 0x10000 ->
+                    String.set output ((*pos)) (chr (((c >> 12) or 0xE0) and 0xFF));
+                    String.set output ((*pos)+1) (chr ((((c >> 6) and 0x3F) or 0x80) and 0xFF));
+                    String.set output ((*pos)+2) (chr (((c and 0x3F) or 0x80) and 0xFF));
+                    pos := *pos + 2;
+                | c when c < 0x110000 ->
+                    String.set output ((*pos)) (chr (((c >> 18) or 0xF0) and 0xFF));
+                    String.set output ((*pos)+1) (chr ((((c >> 12) and 0x3F) or 0x80) and 0xFF));
+                    String.set output ((*pos)+2) (chr ((((c >> 6) and 0x3F) or 0x80) and 0xFF));
+                    String.set output ((*pos)+3) (chr (((c and 0x3F) or 0x80) and 0xFF));
+                    pos := *pos + 3;
+                | _ -> throw InvalidEscape;
+                }
+            | _ -> throw InvalidEscape;
+            }
+        | char -> String.set output (*pos) char
+        }
+        pos := *pos + 1;
+        index := *index + 1;
+    }
+
+    String.sub output 0 (*pos)
+}

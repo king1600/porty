@@ -1,0 +1,349 @@
+open Ast;
+
+var __num_errors = &0;
+var __max_errors = 100;
+
+function try_error() {
+    if *__num_errors > 0 then
+        throw TooManyErrors;
+}
+
+function error(pos, message) {
+    Ast.print_error message pos;
+    __num_errors := *__num_errors + 1;
+    if *__num_errors >= __max_errors then
+        throw TooManyErrors;
+}
+
+function expect(expected, got, pos) {
+    error pos ("Expected " + (Ast.token_string expected) + " got " + (Ast.token_string got))
+}
+
+function unexpected(token, pos) {
+    error pos ("Unexpected " + (Ast.token_string token))
+}
+
+function unterminated(token, pos) {
+    error pos ("Unterminated " + (Ast.token_string token));
+    (ENull, pos)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function reduce(expr, pos) {
+    match expr {
+    | [single_expr] -> single_expr
+    | (e, pos) :: rest -> (EBlock ((e, pos) :: rest), pos)
+    | _ -> error pos "Empty block"; (ENull, Ast.null_pos)
+    }
+}
+
+function is_unary_op(operator) {
+    (operator == Not) || (operator == Sub)
+}
+
+function precedence(operator) {
+    match operator {
+    | Set -> 0
+    | Eq | Neq | And | Or | Lt | Gt | Lte | Gte -> 1
+    | Add | Sub -> 2
+    | Mul | Div | Mod -> 3
+    | Xor | Shr | Shl | BitOr | BitAnd -> 4
+    | _ -> 5
+    }
+}
+
+function can_swap(lhs, rhs) {
+    match (precedence lhs, precedence rhs) {
+    | (left, right) when left < right -> true
+    | (left, right) when left == right -> rhs == Colons
+    | _ -> false
+    }
+}
+
+function rec is_chained(stream) {
+    match stream {
+    | [< (LCurly, pos) >] -> (false, pos)
+    | [< (Cent, pos); (LCurly, _) >] -> (true, pos)
+    }
+}
+
+function rec mk_binop(op, lhs, rhs, pos) {
+    match rhs {
+    | (EBinop (_op, _lhs, _rhs), _pos) when can_swap _op op ->
+        (EBinop _op (mk_binop op lhs _lhs pos) _rhs, _pos)
+    | _ ->
+        (EBinop op lhs rhs, pos)
+    }
+}
+
+function rec mk_pairs(stream, gen_from) {
+    match stream {
+    | [< (Comma, _); next = mk_pairs stream gen_from >] -> next
+    | [< key = literal stream gen_from >] ->
+        match stream {
+        | [< (Colon, _) >] ->
+            match stream {
+            | [< value = literal stream gen_from; next = mk_pairs stream gen_from >] ->
+                (key, value) :: next
+            }
+        | [< (token, pos) >] -> expect (Colon) token pos; []
+        }
+    | [< >] -> []
+    }
+}
+
+function rec mk_tuple(stream, gen_from) {
+    match stream {
+    | [< (RParen, _) >] -> []
+    | [< (Comma, _); next = mk_tuple stream gen_from >] -> next
+    | [< value = gen_from stream; next = mk_tuple stream gen_from >] -> value :: next
+    | [< (token, pos) >] -> expect token RParen pos; []
+    }
+}
+
+function rec mk_list(stream, gen_from) {
+    match stream {
+    | [< (RBrace, _) >] -> []
+    | [< (Comma, _); next = mk_list stream gen_from >] -> next
+    | [< value = gen_from stream; next = mk_tuple stream gen_from >] -> value :: next
+    | [< (token, pos) >] -> expect token RBrace pos; []
+    }
+}
+
+function rec mk_map(stream, gen_from) {
+    match stream {
+    | [< map_header = is_chained stream; pairs = mk_pairs stream gen_from >] ->
+        var is_chained, pos = map_header;
+        match stream {
+        | [< (LCurly, _) >] -> 
+            (pairs, is_chained, pos)
+        | [< >] -> 
+            error pos "Unterminated map exressions";
+            ([], is_chained, pos)
+        }
+    }
+}
+
+function rec gen_from_literal(stream) {
+    literal stream gen_from_literal
+}
+
+function rec literal(stream, gen_from) {
+    match stream {
+    | [< (Null, pos) >] ->(ENull, pos)
+    | [< (True, pos) >] -> (ETrue, pos)
+    | [< (False, pos) >] -> (EFalse, pos)
+    | [< (Int value, pos) >] -> (EInt value, pos)
+    | [< (Ident value, pos) >] -> (EVar value, pos)
+    | [< (Float value, pos) >] -> (EFloat value, pos)
+    | [< (String value, pos) >] -> (EString value, pos)
+    | [< (LParen, _); value = literal stream gen_from; (RParen, _) >] -> value
+    | [< (LBrace, pos); values = mk_list stream gen_from >] -> (EList values, pos)
+    | [< (LParen, pos); values = mk_tuple stream gen_from >] -> (ETuple values, pos)
+    | [< map = mk_map stream gen_from >] -> var pairs, chained, pos = map; (EMap pairs chained, pos)
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function rec expr_or_null(stream, pos) {
+    match stream {
+    | [< value = expr stream >] ->
+        value
+    | [< (token, _) >]->
+        unexpected token pos;
+        (ENull, pos)
+    }
+}
+
+function rec block(stream) {
+    match stream {
+    | [< (Return, pos); value = expr_or_null stream pos; next = block stream >] -> (EReturn value, pos) :: next
+    | [< (Throw, pos); value = expr_or_null stream pos; next = block stream >] -> (EThrow value, pos) :: next
+    | [< (LCurly, pos); body = block stream; (RCurly, _) >] -> [(EBlock body, pos)]
+    | [< stmt = try_statement stream; next = block stream >] -> stmt :: next
+    | [< value = expr stream; next = block stream >] -> value :: next
+    | [< (Semi, _); next = block stream >] -> next
+    | [< >] -> []
+    }
+}
+
+function rec pattern_list(stream) {
+    match stream {
+    | [< (RParen, _) >] -> []
+    | [< (Comma, _); next = pattern_list stream >] -> next
+    | [< value = pattern stream; next = pattern_list stream >] -> value :: next
+    | [< (token, pos) >] -> expect token RParen pos; []
+    }
+}
+
+function rec pattern_next(stream, left) {
+    match stream {
+    | [< (Colon, pos); right = pattern stream >] -> (PCons left right, pos)
+    | [< >] -> left
+    }
+}
+
+function rec pattern(stream) {
+    match stream {
+    | [< (Ident name, pos); (Op Set, _); value = pattern stream >] ->
+        (PBind name value, pos)
+    | [< (LParen, pos); pattern_value = pattern stream >] ->
+        match stream {
+        | [< (RParen, _) >] ->
+            pattern_next stream pattern_value
+        | [< >] ->
+            pattern_next stream (PTuple (pattern_value :: pattern_list stream), pos)
+        }
+    | [< expr_value = literal stream gen_from_literal >] ->
+        pattern_next stream (PExpr expr_value, snd expr_value)
+    }
+}
+
+function rec patterns(stream) {
+    match stream {
+    | [< (Bar, _); case = pattern stream >] ->
+        match stream {
+        | [< (When, _); ewhen = expr stream; (Arrow, pos); body = block stream; next = patterns stream >] ->
+            (case, reduce body pos, Some ewhen) :: next
+        | [< (Arrow, pos); body = block stream; next = patterns stream >] ->
+            (case, reduce body pos, None) :: next
+        }
+    | [< >] -> []
+    }
+}
+
+function rec if_then(stream) {
+    match stream {
+    | [< (Then, _) >] -> true
+    | [< >] -> false
+    }
+}
+
+function rec elif(stream) {
+    match stream {
+    | [< (Elif, pos); cond = expr stream; _ = if_then stream; if_true = block stream; next = elif stream >] ->
+        (cond, reduce if_true pos) :: next
+    | [< >] -> []
+    }
+}
+
+function rec if_statement(stream) {
+    match stream {
+    | [< (If, pos); cond = expr stream; _ = if_then stream; if_true = block stream; elifs = elif stream >] ->
+        match stream {
+        | [< (End, _) >] ->
+            (EIf cond (reduce if_true pos) elifs None, pos)
+        | [< (Else, epos); if_false = block stream; (End, _) >] ->
+            (EIf cond (reduce if_true pos) elifs (Some (reduce if_false epos)), pos)
+        | [< >] ->
+            unterminated If pos
+        }
+    }
+}
+
+function rec match_statement(stream) {
+    match stream {
+    | [< (Match, pos); value = expr stream; cases = patterns stream >] ->
+        match stream {
+        | [< (End, _) >] ->
+            if (List.length cases) == 0 then
+                error pos ((Ast.token_string Match) + " statement with no cases");
+            (EMatch value cases, pos)
+        | [< >] ->
+            unterminated Match pos
+        }
+    }
+}
+
+function rec try_statement(stream) {
+    match stream {
+    | [< (Try, pos); body = block stream >] ->
+        match stream {
+        | [< (End, _) >] ->
+            (ETry (reduce body pos) None, pos)
+        | [< (Catch, _); cases = patterns stream; (End, _) >] ->
+            (ETry (reduce body pos) (Some cases), pos)
+        | [< (Bar, bpos) >] ->
+            expect Catch Bar bpos; (ENull, bpos)
+        | [< >] ->
+            unterminated Try pos
+        }
+    }
+}
+
+function rec expr(stream) {
+    match stream {
+    | [< expr_lit = literal stream expr >] ->
+        expr_next stream expr_lit
+    | [< if_expr = if_statement stream >] ->
+        expr_next stream if_expr
+    | [< match_expr = match_statement stream >] ->
+        expr_next stream match_expr
+    | [< (Op op, pos) >] ->
+        if !(is_unary_op op) then
+            error pos ("Invalid unary operator: " + (Ast.token_string (Op op)));
+        match stream {
+        | [< value = expr stream >] ->
+            expr_next stream (EUnop op value, pos)
+        }
+    }
+}
+
+function rec expr_next(stream, left) {
+    match stream {
+    | [< (Dot, pos); (Ident right, _) >] ->
+        expr_next stream (EAccess left right, pos)
+    | [< (LParen, pos); args = mk_tuple stream expr >] ->
+        expr_next stream (ECall left args, pos)
+    | [< (Op op, pos) >] ->
+        match stream {
+        | [< right = expr stream >] ->
+            expr_next stream (mk_binop op left right pos)
+        | [< >] ->
+            error pos ("Missing rhs of binary operator " + (Ast.token_string (Op op)));
+            left
+        }
+    | [< >] ->
+        left
+    }
+}
+
+function rec functions(stream) {
+    match stream {
+    | [< (Func, pos); (Ident name, _); (LParen, _); args = pattern_list stream >] ->
+        match stream {
+        | [< (Colon, cpos); body = block stream; next = functions stream >] ->
+            try_error();
+            (EFunc name args None (reduce body cpos), pos) :: next
+        | [< (When, _); ewhen = expr stream; (Colon, cpos); body = block stream; next = functions stream >] ->
+            try_error();
+            (EFunc name args (Some ewhen) (reduce body cpos), pos) :: next
+        | [< (token, pos) >] ->
+            unexpected token pos;
+            throw TooManyErrors;
+        }
+    | [< >] -> []
+    }
+}
+
+function rec program(stream) {
+    match stream {
+    | [< (Eof, _) >] -> []
+    | [< (Module, pos); (Ident name, _); funcs = functions stream; next = program stream >] ->
+        try_error();
+        (EModule name funcs, pos) :: next
+    | [< (token, pos) >] ->
+        unexpected token pos;
+        throw TooManyErrors;
+    }
+}
+
+function apply(token_stream) {
+    program (stream (function () {
+        match token_stream {
+        | [< token >] -> token
+        }
+    }))
+}

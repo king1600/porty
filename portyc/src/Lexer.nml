@@ -1,0 +1,132 @@
+open Ast;
+open Utf;
+
+var _index = &0;
+var _length = &0;
+var _col, _line, _start = (&0, &1, &0);
+
+function next(is_newline) {
+    if is_newline then {
+        _start := *_start + (*_col) + 1;
+        _line := *_line + 1;
+        _col := 0;
+    } else {
+        _col := *_col + 1;
+    }
+    _index := *_index + 1;
+}
+
+function rec next_char() {
+    var pos = (*_col, *_line, *_start);
+    if (*_index) < (*_length) then {
+        match String.get (*Ast.__current_source) (*_index) {
+        | '\n' -> next(true); next_char()
+        | char -> next(false); (char, pos)
+        }
+    } else (chr 0, pos);
+}
+
+function read_while(start, predicate) {
+    var remains = &true;
+    var output = Buffer.create ();
+    if (ord start) != 0 then Buffer.add_char output start;
+    
+    while *remains && (*_index) < (*_length) {
+        match next_char() {
+        | (char, _) when predicate char -> Buffer.add_char output char
+        | _ -> _col := *_col - 1; _index := *_index - 1; remains := false;
+        }
+    }
+
+    Buffer.string output;
+}
+
+///////////////////////////////////////////////////////////////////////
+
+function lex_ident(char, pos) {
+    var text = read_while char Utf.is_ident;
+    try { (Hashtbl.find Ast.token_map text, pos) }
+    catch { _ -> (Ident text, pos) }
+}
+
+function lex_operator(char, pos) {
+    var operator = read_while char Utf.is_operator;
+    try { (Hashtbl.find Ast.token_map operator, pos) }
+    catch { _ -> throw ParseError("Invalid operator: " + operator, pos) }
+}
+
+function lex_number(char, pos) {
+    var number = read_while char Utf.is_numeric;
+    try { (Int (int number), pos) }
+    catch { _ -> 
+        try { (Float (float number), pos) }
+        catch { _ -> throw ParseError("Invalid number literal: " + number, pos) }
+    }
+}
+
+function lex_string(pos) {
+    var remains = &true;
+    var output = Buffer.create();
+
+    while *remains {
+        var text = read_while (chr 0) Utf.isnt_str;
+        var length = String.length text;
+        Buffer.add output text;
+
+        if length != 0 && ((String.get text (length - 1)) == '\\')
+        then Buffer.add_char output '"'
+        else remains := false
+    }
+
+    if (fst (next_char())) == '"'
+    then (String (Utf.unescape (Buffer.string output)), pos)
+    else throw ParseError("Unterminated string", pos)
+}
+
+function rec lex_comment(stream, is_multiline) {
+    match stream {
+    | [< ('*', _); (')', _) >] -> if is_multiline then true else (lex_comment stream false)
+    | [< ('\n', _) >] -> if is_multiline then (lex_comment stream true) else false
+    | [< (_, _) >] -> lex_comment stream is_multiline
+    }
+}
+
+function rec lex(stream) {
+    match stream {
+    | [< ('|', pos) >] -> (Bar, pos)
+    | [< ('.', pos) >] -> (Dot, pos)
+    | [< (';', pos) >] -> (Semi, pos)
+    | [< ('%', pos) >] -> (Cent, pos)
+    | [< (',', pos) >] -> (Comma, pos)
+    | [< ('(', pos) >] -> (LParen, pos)
+    | [< (')', pos) >] -> (RParen, pos)
+    | [< ('[', pos) >] -> (LBrace, pos)
+    | [< (']', pos) >] -> (RBrace, pos)
+    | [< ('{', pos) >] -> (LCurly, pos)
+    | [< ('}', pos) >] -> (RCurly, pos)
+    | [< ('"', pos) >] -> lex_string pos
+    | [< ('-', pos); ('>', _) >] -> (Arrow, pos)
+    | [< (':', pos); (':', _) >] -> (Op Colons, pos)
+    | [< (':', pos) >] -> (Colon, pos)
+    | [< ('(', _); ('*', _); _ = lex_comment stream true >] -> lex stream
+    | [< ('-', _); ('-', _); _ = lex_comment stream false >] -> lex stream
+    | [< (char, pos) >] ->
+        if (ord char) == 0 then (Eof, pos)
+        else if Utf.is_seperator char then lex stream
+        else if Utf.is_numeric char then lex_number char pos
+        else if Utf.is_operator char then lex_operator char pos
+        else if Utf.is_ident_start char then lex_ident char pos
+        else throw ParseError("Invalid character: " + (String.make 1 char), pos)
+    }
+}
+
+function apply(source) {
+    _col := 0;
+    _line := 1;
+    _index := 0;
+    _start := 0;
+    _length := String.length source;
+    
+    var token_stream = stream next_char;
+    stream (function() { lex token_stream })
+}

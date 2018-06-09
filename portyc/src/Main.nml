@@ -1,0 +1,53 @@
+open Ast;
+open Lexer;
+open Parser;
+
+exception FileNotFound : string;
+
+function read_file(filename) {
+     try { IO.file_contents filename }
+     catch { _ -> throw FileNotFound(filename) }
+}
+
+try {
+    var paths = &[];
+    var files = &[];
+    var output = &"";
+    var link = &false;
+    var dir = &(Sys.get_cwd());
+
+    Args.parse "Porty Compiler v0.0.1\n Usage: ptc [options] files" [
+        ("-d", Args.String (function(d) { dir := d }), "<dir>: output bytecode directory");
+        ("-o", Args.String (function(o) { output := o }), "<output>: output bytecode filename");
+        ("-l", Args.Void (function() { link := true }), ": link bytecode files into single file");
+        ("-p", Args.String (function(p) { paths := p :: *paths }), "<path>: addition search path");
+    ] (function(f) { files := f :: *files });
+
+    // add path arguments to PATH
+    if (List.length (*paths)) > 0 then {
+        match Sys.get_env("PATH") {
+        | Some sys_path -> Sys.put_env "PATH" (String.concat ";" (sys_path :: *paths))
+        | None -> ()
+        }
+    }
+
+    // link bytecode files
+    if (*link) then {
+
+    // compile source files
+    } else {
+        List.iter (function(filename) {
+            var content = read_file filename;
+            Ast.set_current filename content;
+            var ast = Parser.apply (Lexer.apply content);
+            print ast; print "\n";
+            
+        }) (*files);
+    }
+
+} catch {
+    | TooManyErrors -> ()
+    | ParseError(message, pos) -> Ast.print_error message pos
+    | FileNotFound(filename) -> IO.printf IO.stderr "File not Found: %s\n" (filename)
+    | exc -> print exc; print "\n";
+}

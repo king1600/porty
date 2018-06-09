@@ -1,0 +1,253 @@
+open Utf;
+
+type operator {
+    Add;
+    Sub;
+    Mul;
+    Div;
+    Mod;
+    Not;
+    Set;
+    Eq;
+    Neq;
+    Lt;
+    Lte;
+    Gt;
+    Gte;
+    Or;
+    And;
+    Shr;
+    Shl;
+    Xor;
+    BitOr;
+    BitAnd;
+    Colons;
+}
+
+type token_type {
+    // literals
+    Int : int;
+    Op : operator;
+    Float : float;
+    Ident : string;
+    String : string;
+
+    // character(s)
+    Eof;
+    Bar;
+    Dot;
+    Semi;
+    Cent;
+    Comma;
+    Arrow;
+    Colon;
+    LParen;
+    RParen;
+    LBrace;
+    RBrace;
+    LCurly;
+    RCurly;
+
+    // keywords
+    Null;
+    True;
+    False;
+    If;
+    Elif;
+    Then;
+    Else;
+    End;
+    Func;
+    Module;
+    Match;
+    When;
+    Try;
+    Throw;
+    Catch;
+    Return;
+}
+
+function token_string(token) {
+    match token {
+    | Eof -> "eof"
+    | Bar -> "|"
+    | Dot -> "."
+    | Semi -> ";"
+    | Cent -> "%"
+    | Colon -> ":"
+    | Comma -> ","
+    | Arrow -> "->"
+    | LParen -> "("
+    | RParen -> ")"
+    | LBrace -> "["
+    | RBrace -> "]"
+    | LCurly -> "{"
+    | RCurly -> "}"
+    | Null -> "nil"
+    | True -> "true"
+    | False -> "false"
+    | If -> "if"
+    | Then -> "then"
+    | Elif -> "elif"
+    | Else -> "else"
+    | End -> "end"
+    | Match -> "match"
+    | When -> "when"
+    | Try -> "try"
+    | Throw -> "throw"
+    | Catch -> "catch"
+    | Func -> "def"
+    | Module -> "module"
+    | Return -> "return"
+    | Op Add -> "+"
+    | Op Sub -> "-"
+    | Op Div -> "/"
+    | Op Mul -> "*"
+    | Op Mod -> "%"
+    | Op Set -> "="
+    | Op Not -> "!"
+    | Op Eq -> "=="
+    | Op Neq -> "!="
+    | Op Lt -> "<"
+    | Op Lte -> "<="
+    | Op Gt -> ">"
+    | Op Gte -> ">="
+    | Op Or -> "||"
+    | Op And -> "&&"
+    | Op Shr -> ">>"
+    | Op Shl -> "<<"
+    | Op Xor -> "^"
+    | Op BitOr -> "or"
+    | Op BitAnd -> "and"
+    | Op Colons -> "::"
+    | Int i -> string i
+    | Float f -> string f
+    | Ident ident -> ident
+    | String str -> "\"" + str + "\""
+    }
+}
+
+var token_map = {
+    var table = Hashtbl.create ();
+    List.iter (function((key, value)) { Hashtbl.add table key value }) [
+        (token_string Null, Null);
+        (token_string True, True);
+        (token_string False, False);
+        (token_string If, If);
+        (token_string Then, Then);
+        (token_string Elif, Elif);
+        (token_string Else, Else);
+        (token_string End, End);
+        (token_string Match, Match);
+        (token_string When, When);
+        (token_string Try, Try);
+        (token_string Throw, Throw);
+        (token_string Catch, Catch);
+        (token_string Func, Func);
+        (token_string Module, Module);
+        (token_string Return, Return);
+        (token_string (Op Add), Op Add);
+        (token_string (Op Sub), Op Sub);
+        (token_string (Op Div), Op Div);
+        (token_string (Op Mul), Op Mul);
+        (token_string (Op Mod), Op Mod);
+        (token_string (Op Not), Op Not);
+        (token_string (Op Eq), Op Eq);
+        (token_string (Op Neq), Op Neq);
+        (token_string (Op Lt), Op Lt);
+        (token_string (Op Gt), Op Gt);
+        (token_string (Op Or), Op Or);
+        (token_string (Op And), Op And);
+        (token_string (Op Set), Op Set);
+        (token_string (Op Lte), Op Lte);
+        (token_string (Op Gte), Op Gte);
+        (token_string (Op Shr), Op Shr);
+        (token_string (Op Shl), Op Shl);
+        (token_string (Op Xor), Op Xor);
+        (token_string (Op BitOr), Op BitOr);
+        (token_string (Op BitAnd), Op BitAnd);
+        (token_string (Op Colons), Op Colons);
+        ("xor", Op Xor);
+        ("mod", Op Mod);
+        ("not", Op Not);
+        ("is", Op Eq);
+        ("isnt", Op Neq)
+        ("raise", Throw);
+    ];
+    table
+}
+
+var null_pos = (0, 0, 0);
+type source_loc = (int, int, int);
+type token = (token_type, source_loc);
+
+//////////////////////////////////////////
+
+type expr;
+type pattern;
+
+type pattern_t {
+    PExpr : expr;
+    PTuple : pattern list;
+    PBind : (string, pattern);
+    PCons : (pattern, pattern);
+}
+
+type expr_t {
+    ENull;
+    ETrue;
+    EFalse;
+    EInt : int;
+    EVar : string;
+    EFloat : float;
+    EString : string;
+    EThrow : expr;
+    EReturn : expr;
+    EList : expr list;
+    EBlock : expr list;
+    ETuple : expr list;
+    EMap : ((expr, expr) list, bool);
+    EAccess : (expr, string);
+    ECall : (expr, expr list);
+    EUnop : (operator, expr);
+    EBinop : (operator, expr, expr);
+    EModule : (string, expr list);
+    EFunc : (string, pattern list, expr option, expr);
+    EIf : (expr, expr, (expr, expr) list, expr option);
+    EMatch : (expr, (pattern, expr, expr option) list);
+    ETry : (expr, ((pattern, expr, expr option) list) option);
+}
+
+type expr = (expr_t, source_loc);
+type pattern = (pattern_t, source_loc);
+
+//////////////////////////////////////////
+
+exception TooManyErrors;
+exception ParseError : (string, source_loc);
+
+var __current_source = &"";
+var __current_filename = &"";
+
+function set_current(filename, source) {
+    __current_source := source;
+    __current_filename := filename;
+}
+
+function ltrim(source) {
+    var length = String.length source;
+    function rec loop(index) {
+        if (index < length) && is_space(String.get source index)
+        then loop (index + 1)
+        else String.sub source index (length - index)
+    }
+    loop(0)
+}
+
+function print_error(message, (col, line, start)) {
+    var source = *__current_source;
+    var filename = *__current_filename;
+    IO.printf IO.stderr "Error on %s:%d:%d> %s\n" (filename, line, col, message)
+    var end = try { String.find source start "\n" } catch { _ -> String.length source }
+    IO.printf IO.stderr "  %s\n\n" (ltrim (String.sub source start (end - start)))
+}
