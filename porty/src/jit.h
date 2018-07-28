@@ -47,8 +47,7 @@ typedef enum {
     PT_XOR,
     PT_SHL,
     PT_SHR,
-    PT_JMP,
-
+    PT_JMP
 }
 
 typedef struct {
